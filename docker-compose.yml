@@ -1,0 +1,302 @@
+# Docker Compose Configuration for DriftControl Testing
+# This file contains various container configurations to test drift detection
+
+version: '3.8'
+
+services:
+  # Web Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_ENV: development
+    image: driftcontrol-test:latest
+    container_name: driftcontrol_app
+    ports:
+      - "3000:3000"
+      - "9229:9229"  # Debug port
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - DATABASE_URL=postgresql://postgres:password@db:5432/driftcontrol_dev
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=dev_jwt_secret_123
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - app_logs:/var/log/app
+    depends_on:
+      - db
+      - redis
+    networks:
+      - app_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # PostgreSQL Database
+  db:
+    image: postgres:13-alpine
+    container_name: driftcontrol_db
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=driftcontrol_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - app_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d driftcontrol_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: driftcontrol_redis
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass redis_password_123
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_password_123", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.2'
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:1.21-alpine
+    container_name: driftcontrol_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - app
+    networks:
+      - app_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Background Job Worker
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    image: driftcontrol-worker:latest
+    container_name: driftcontrol_worker
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://postgres:password@db:5432/driftcontrol_dev
+      - REDIS_URL=redis://redis:6379/0
+      - WORKER_CONCURRENCY=5
+      - WORKER_QUEUES=default,high_priority,low_priority
+    volumes:
+      - worker_logs:/var/log/worker
+    depends_on:
+      - db
+      - redis
+    networks:
+      - app_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+
+  # Monitoring - Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: driftcontrol_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - app_network
+    restart: unless-stopped
+
+  # Monitoring - Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: driftcontrol_grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=grafana_admin_123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+    networks:
+      - app_network
+    restart: unless-stopped
+
+  # Message Queue - RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: driftcontrol_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=admin
+      - RABBITMQ_DEFAULT_PASS=rabbitmq_password_123
+      - RABBITMQ_DEFAULT_VHOST=driftcontrol
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - app_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MinIO (S3-compatible storage)
+  minio:
+    image: minio/minio:latest
+    container_name: driftcontrol_minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minio_admin
+      - MINIO_ROOT_PASSWORD=minio_password_123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - app_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # ElasticSearch for logging
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.5.0
+    container_name: driftcontrol_elasticsearch
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - app_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+# Network Configuration
+networks:
+  app_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Volume Configuration
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  app_logs:
+    driver: local
+  worker_logs:
+    driver: local
+  nginx_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+  minio_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+
+# Development Override (docker-compose.override.yml would be used)
+# This demonstrates configuration that might change and cause drift
+x-development-overrides: &dev-overrides
+  environment:
+    - DEBUG=true
+    - LOG_LEVEL=debug
+    - HOT_RELOAD=true
+  volumes:
+    - .:/app
