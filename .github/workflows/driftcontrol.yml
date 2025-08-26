@@ -35,7 +35,7 @@ jobs:
           fetch-depth: 0  # Full history for better diff analysis
 
       - name: DriftControl - Comprehensive Analysis
-        uses: raulgsh/driftcontrol-action-public@v1
+        uses: raulgsh/driftcontrol-action-public@v0.1.0
         with:
           # Authentication
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -79,7 +79,7 @@ jobs:
           fetch-depth: 0
 
       - name: DriftControl - Production Strict Mode
-        uses: raulgsh/driftcontrol-action-public@v1
+        uses: raulgsh/driftcontrol-action-public@v0.1.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           openapi_path: 'openapi.yaml'
@@ -105,7 +105,7 @@ jobs:
           fetch-depth: 0
 
       - name: DriftControl - Development Relaxed Mode
-        uses: raulgsh/driftcontrol-action-public@v1
+        uses: raulgsh/driftcontrol-action-public@v0.1.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           openapi_path: 'openapi.yaml'
@@ -130,7 +130,7 @@ jobs:
           fetch-depth: 0
 
       - name: DriftControl - Security Analysis
-        uses: raulgsh/driftcontrol-action-public@v1
+        uses: raulgsh/driftcontrol-action-public@v0.1.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           
@@ -156,7 +156,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: DriftControl with Performance Monitoring
-        uses: raulgsh/driftcontrol-action-public@v1
+        uses: raulgsh/driftcontrol-action-public@v0.1.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           openapi_path: 'openapi.yaml'
