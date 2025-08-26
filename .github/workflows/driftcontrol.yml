@@ -1,0 +1,28 @@
+name: DriftControl Analysis
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    # optional: only run when these files change
+    paths:
+      - 'openapi.yaml'
+      - 'migrations/**/*.sql'
+
+permissions:
+  contents: read
+  pull-requests: write   # allow PR comments
+
+jobs:
+  drift-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: DriftControl
+        uses: raulgsh/driftcontrol-action-public@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          openapi_path: 'openapi.yaml'
+          sql_glob: 'migrations/**/*.sql'
+          # fail_on_medium: 'false'  # default; flip to 'true' if you want
+          # override: 'false'        # set 'true' for emergency bypass
