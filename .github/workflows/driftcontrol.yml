@@ -3,26 +3,196 @@ name: DriftControl Analysis
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    # optional: only run when these files change
+    # Comprehensive path monitoring for all drift types
     paths:
       - 'openapi.yaml'
       - 'migrations/**/*.sql'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'terraform/**/*'
+      - 'config/**/*.yml'
+      - 'config/**/*.yaml'
+      - 'docker-compose.yml'
+      - 'docker-compose.*.yml'
+      - 'feature-flags.json'
+      - '.env*'
+      - 'Dockerfile*'
 
 permissions:
   contents: read
   pull-requests: write   # allow PR comments
+  actions: read          # for workflow context
 
 jobs:
+  # Main DriftControl Analysis
   drift-analysis:
     runs-on: ubuntu-latest
+    name: Comprehensive Drift Analysis
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better diff analysis
 
-      - name: DriftControl
+      - name: DriftControl - Comprehensive Analysis
+        uses: raulgsh/driftcontrol-action-public@v0.1.0
+        with:
+          # Authentication
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+          # API Drift Detection
+          openapi_path: 'openapi.yaml'
+          
+          # Database Drift Detection
+          sql_glob: 'migrations/**/*.sql'
+          
+          # Infrastructure as Code
+          terraform_plan_path: 'terraform/plan.json'
+          cloudformation_glob: 'terraform/**/*.yml'
+          
+          # Configuration Drift
+          config_yaml_glob: 'config/**/*.yml'
+          feature_flags_path: 'feature-flags.json'
+          
+          # Cost and Risk Management
+          cost_threshold: '100'  # Block if monthly cost increase > $100
+          fail_on_medium: 'false'  # Set 'true' for stricter blocking
+          
+          # Emergency Override
+          override: 'false'  # Set 'true' for emergency bypass with audit trail
+          
+          # Optional: LLM Integration for Enhanced Explanations
+          # llm_provider: 'openai'  # or 'anthropic'
+          # llm_api_key: ${{ secrets.OPENAI_API_KEY }}
+          # llm_model: 'gpt-4'
+          # llm_max_tokens: '200'
+
+  # Environment-Specific Analysis
+  production-drift-analysis:
+    runs-on: ubuntu-latest
+    name: Production Environment Analysis
+    if: github.base_ref == 'main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: DriftControl - Production Strict Mode
         uses: raulgsh/driftcontrol-action-public@v0.1.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           openapi_path: 'openapi.yaml'
           sql_glob: 'migrations/**/*.sql'
-          # fail_on_medium: 'false'  # default; flip to 'true' if you want
-          # override: 'false'        # set 'true' for emergency bypass
+          terraform_plan_path: 'terraform/plan.json'
+          config_yaml_glob: 'config/**/*.yml'
+          feature_flags_path: 'feature-flags.json'
+          
+          # Strict mode for production
+          cost_threshold: '50'     # Lower threshold for production
+          fail_on_medium: 'true'   # Block medium-risk changes in production
+          override: 'false'        # No override allowed in production
+
+  # Development Environment Analysis  
+  development-drift-analysis:
+    runs-on: ubuntu-latest
+    name: Development Environment Analysis
+    if: github.base_ref == 'develop' || github.base_ref == 'dev'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: DriftControl - Development Relaxed Mode
+        uses: raulgsh/driftcontrol-action-public@v0.1.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          openapi_path: 'openapi.yaml'
+          sql_glob: 'migrations/**/*.sql'
+          terraform_plan_path: 'terraform/plan.json'
+          config_yaml_glob: 'config/**/*.yml'
+          feature_flags_path: 'feature-flags.json'
+          
+          # Relaxed mode for development
+          cost_threshold: '200'    # Higher threshold for dev
+          fail_on_medium: 'false'  # Allow medium-risk changes in dev
+          override: 'true'         # Allow override in development
+
+  # Security-Focused Analysis
+  security-drift-analysis:
+    runs-on: ubuntu-latest
+    name: Security-Focused Analysis
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: DriftControl - Security Analysis
+        uses: raulgsh/driftcontrol-action-public@v0.1.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Focus on security-sensitive files
+          openapi_path: 'openapi.yaml'
+          config_yaml_glob: 'config/secrets.yml'
+          
+          # Security-first configuration
+          fail_on_medium: 'true'
+          override: 'false'
+          
+          # Enhanced analysis for security
+          # llm_provider: 'openai'
+          # llm_api_key: ${{ secrets.OPENAI_API_KEY }}
+          # llm_model: 'gpt-4'
+
+  # Performance Monitoring
+  performance-monitoring:
+    runs-on: ubuntu-latest
+    name: Monitor DriftControl Performance
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: DriftControl with Performance Monitoring
+        uses: raulgsh/driftcontrol-action-public@v0.1.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          openapi_path: 'openapi.yaml'
+          sql_glob: 'migrations/**/*.sql'
+          terraform_plan_path: 'terraform/plan.json'
+          config_yaml_glob: 'config/**/*.yml'
+          feature_flags_path: 'feature-flags.json'
+        
+      - name: Performance Analysis
+        run: |
+          echo "=== DriftControl Performance Metrics ==="
+          echo "Workflow run time: ${{ github.event.pull_request.created_at }}"
+          echo "Analysis complete: $(date)"
+          echo "Files analyzed: $(find . -name '*.yaml' -o -name '*.yml' -o -name '*.sql' -o -name '*.json' | wc -l)"
+          echo "Repository size: $(du -sh . | cut -f1)"
+
+  # Notification job for critical findings
+  notify-critical-findings:
+    runs-on: ubuntu-latest
+    name: Critical Findings Notification
+    needs: [drift-analysis, security-drift-analysis]
+    if: failure()
+    steps:
+      - name: Notify on Critical Drift
+        run: |
+          echo "🚨 CRITICAL DRIFT DETECTED 🚨"
+          echo "High-severity changes found that require immediate attention."
+          echo "Review the DriftControl analysis in the PR comments."
+          echo "Consider using emergency override only if absolutely necessary."
+          
+      # Optional: Slack notification for critical issues
+      # - name: Slack Notification
+      #   if: env.SLACK_WEBHOOK_URL
+      #   uses: 8398a7/action-slack@v3
+      #   with:
+      #     status: failure
+      #     text: "Critical drift detected in ${{ github.repository }} PR #${{ github.event.number }}"
+      #   env:
+      #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
